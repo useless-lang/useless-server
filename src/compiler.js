@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const acorn = require('acorn');
+const ts = require('typescript');
 
 // EVM opcodes
 const OPCODES = {
@@ -17,36 +17,37 @@ function toHex(n, bytes = 1) {
 
 function compile(inputPath, outputPath) {
     const content = fs.readFileSync(inputPath, 'utf8');
-    const ast = acorn.parse(content, { ecmaVersion: 2020 });
+    const ast = ts.createSourceFile('temp.ts', content, ts.ScriptTarget.Latest, true);
 
     let bytecode = '';
     const storage = {}; // Variable -> slot mapping
     let slot = 0;
     const functions = [];
 
-    // Parse AST
-    for (const node of ast.body) {
-        if (node.type === 'VariableDeclaration' && node.declarations[0].id.name === 'contract') {
-            const contractBody = node.declarations[0].init.properties;
+    // Find the contract node
+    ts.forEachChild(ast, (node) => {
+        if (ts.isVariableStatement(node) && node.declarationList.declarations[0].name.getText() === 'contract') {
+            const contractBody = node.declarationList.declarations[0].initializer.properties;
 
-            for (const prop of contractBody) {
-                if (prop.key.name === 'var') {
-                    const varName = prop.value.declarations[0].id.name;
+            contractBody.forEach((prop) => {
+                if (prop.name.getText() === 'var') {
+                    const varDecl = prop.initializer.declarationList.declarations[0];
+                    const varName = varDecl.name.getText();
                     storage[varName] = slot++;
-                    const initValue = prop.value.declarations[0].init.value;
-                    bytecode += OPCODES.PUSH1 + toHex(initValue); // Initial value
+                    const initValue = varDecl.initializer.getText();
+                    bytecode += OPCODES.PUSH1 + toHex(parseInt(initValue, 10)); // Initial value
                     bytecode += OPCODES.PUSH1 + toHex(storage[varName]); // Slot
                     bytecode += OPCODES.SSTORE; // Store
-                } else if (prop.value.type === 'FunctionExpression' && prop.key.name.startsWith('public function')) {
-                    functions.push({
-                        name: prop.key.name.replace('public function ', ''),
-                        body: prop.value.body.body
-                    });
+                } else if (ts.isPropertyAssignment(prop) && prop.name.getText().startsWith('public function')) {
+                    const funcName = prop.name.getText().replace('public function ', '');
+                    const funcBody = prop.initializer.body.statements;
+                    functions.push({ name: funcName, body: funcBody });
                 }
-            }
+            });
         }
-    }
+    });
 
+    // Function dispatcher
     bytecode += OPCODES.CALLDATASIZE;
     bytecode += OPCODES.PUSH1 + '04'; // Selector offset
     bytecode += OPCODES.CALLDATALOAD; // Load selector
@@ -67,16 +68,18 @@ function compile(inputPath, outputPath) {
     functions.forEach((func) => {
         bytecode += OPCODES.JUMPDEST; // Function entry
 
-        for (const stmt of func.body) {
-            if (stmt.type === 'ExpressionStatement' && stmt.expression.operator === '+=') {
-                bytecode += OPCODES.PUSH1 + toHex(storage[stmt.expression.left.name]); // Slot
+        func.body.forEach((stmt) => {
+            if (ts.isExpressionStatement(stmt) && stmt.expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) {
+                const varName = stmt.expression.left.getText();
+                bytecode += OPCODES.PUSH1 + toHex(storage[varName]); // Slot
                 bytecode += OPCODES.SLOAD; // Load count
-                bytecode += OPCODES.PUSH1 + toHex(stmt.expression.right.value); // Increment value
+                bytecode += OPCODES.PUSH1 + toHex(stmt.expression.right.getText()); // Increment value
                 bytecode += OPCODES.ADD; // Add
-                bytecode += OPCODES.PUSH1 + toHex(storage[stmt.expression.left.name]); // Slot
+                bytecode += OPCODES.PUSH1 + toHex(storage[varName]); // Slot
                 bytecode += OPCODES.SSTORE; // Store
-            } else if (stmt.type === 'ReturnStatement') {
-                bytecode += OPCODES.PUSH1 + toHex(storage[stmt.argument.name]); // Slot
+            } else if (ts.isReturnStatement(stmt)) {
+                const varName = stmt.expression.getText();
+                bytecode += OPCODES.PUSH1 + toHex(storage[varName]); // Slot
                 bytecode += OPCODES.SLOAD; // Load count
                 bytecode += OPCODES.PUSH1 + '20'; // Memory offset
                 bytecode += OPCODES.MSTORE; // Store in memory
@@ -84,7 +87,7 @@ function compile(inputPath, outputPath) {
                 bytecode += OPCODES.PUSH1 + '00'; // Return offset
                 bytecode += OPCODES.RETURN; // Return
             }
-        }
+        });
     });
 
     bytecode += OPCODES.STOP;
