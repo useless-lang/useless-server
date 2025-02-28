@@ -1,0 +1,28 @@
+{
+  "name": "useless-lang",
+  "version": "1.0.0",
+  "description": "A smart contract language with Motoko-like syntax compiling to EVM bytecode",
+  "main": "src/compiler.js",
+  "bin": {
+    "uselessc": "src/cli.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "smart-contracts",
+    "evm",
+    "motoko",
+    "solidity"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "dependencies": {
+    "acorn": "^8.0.0",
+    "useless-lang": "file:"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "types": "src/useless.d.ts"
+}
