@@ -1,7 +1,7 @@
 // routes/waitlist.js
 const express = require('express');
 const router = express.Router();
-const User = require('../models/Waitlist');
+const User = require('../models/waitlist');
 
 // Add user to waitlist
 router.post('/add', async (req, res) => {
